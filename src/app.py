@@ -5,17 +5,36 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
+import json
 import os
 from pathlib import Path
+import secrets
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
 
-# Mount the static files directory
 current_dir = Path(__file__).parent
+TEACHERS_FILE = current_dir / "teachers.json"
+teacher_sessions: set[str] = set()
+
+
+def load_teachers() -> dict[str, str]:
+    with TEACHERS_FILE.open(encoding="utf-8") as file:
+        return json.load(file)
+
+
+def require_teacher(authorization: str | None = Header(default=None)) -> None:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Teacher login required")
+
+    token = authorization.removeprefix("Bearer ")
+    if token not in teacher_sessions:
+        raise HTTPException(status_code=401, detail="Teacher login required")
+
+# Mount the static files directory
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
 
@@ -88,8 +107,26 @@ def get_activities():
     return activities
 
 
+@app.post("/teacher/login")
+def teacher_login(username: str, password: str):
+    teachers = load_teachers()
+    if teachers.get(username) != password:
+        raise HTTPException(status_code=401, detail="Invalid teacher username or password")
+
+    token = secrets.token_urlsafe(32)
+    teacher_sessions.add(token)
+    return {"token": token, "username": username}
+
+
+@app.post("/teacher/logout")
+def teacher_logout(authorization: str | None = Header(default=None)):
+    if authorization and authorization.startswith("Bearer "):
+        teacher_sessions.discard(authorization.removeprefix("Bearer "))
+    return {"message": "Logged out"}
+
+
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
+def signup_for_activity(activity_name: str, email: str, _: None = Depends(require_teacher)):
     """Sign up a student for an activity"""
     # Validate activity exists
     if activity_name not in activities:
@@ -111,7 +148,7 @@ def signup_for_activity(activity_name: str, email: str):
 
 
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
+def unregister_from_activity(activity_name: str, email: str, _: None = Depends(require_teacher)):
     """Unregister a student from an activity"""
     # Validate activity exists
     if activity_name not in activities:

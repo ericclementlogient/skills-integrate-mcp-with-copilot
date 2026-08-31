@@ -3,6 +3,26 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
+  const loginToggle = document.getElementById("teacher-login-toggle");
+  const loginPanel = document.getElementById("teacher-login-panel");
+  const loginForm = document.getElementById("teacher-login-form");
+  const signupContainer = document.getElementById("signup-container");
+  let teacherToken = sessionStorage.getItem("teacher_token");
+
+  function showMessage(message, type) {
+    messageDiv.textContent = message;
+    messageDiv.className = type;
+    messageDiv.classList.remove("hidden");
+    setTimeout(() => messageDiv.classList.add("hidden"), 5000);
+  }
+
+  function updateTeacherControls() {
+          headers: { Authorization: `Bearer ${teacherToken}` },
+    const isTeacher = Boolean(teacherToken);
+    loginToggle.textContent = isTeacher ? "Log out" : "Teacher login";
+    signupContainer.classList.toggle("hidden", !isTeacher);
+    loginPanel.classList.add("hidden");
+  }
 
   // Function to fetch activities from API
   async function fetchActivities() {
@@ -12,6 +32,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Clear loading message
       activitiesList.innerHTML = "";
+      activitySelect.innerHTML = '<option value="">-- Select an activity --</option>';
 
       // Populate activities list
       Object.entries(activities).forEach(([name, details]) => {
@@ -21,7 +42,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const spotsLeft =
           details.max_participants - details.participants.length;
 
-        // Create participants HTML with delete icons instead of bullet points
+        // Only authenticated teachers can change registrations.
         const participantsHTML =
           details.participants.length > 0
             ? `<div class="participants-section">
@@ -30,7 +51,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 ${details.participants
                   .map(
                     (email) =>
-                      `<li><span class="participant-email">${email}</span><button class="delete-btn" data-activity="${name}" data-email="${email}">❌</button></li>`
+                      `<li><span class="participant-email">${email}</span>${teacherToken ? `<button class="delete-btn" data-activity="${name}" data-email="${email}" aria-label="Remove ${email}">Remove</button>` : ""}</li>`
                   )
                   .join("")}
               </ul>
@@ -86,26 +107,16 @@ document.addEventListener("DOMContentLoaded", () => {
       const result = await response.json();
 
       if (response.ok) {
-        messageDiv.textContent = result.message;
-        messageDiv.className = "success";
+        showMessage(result.message, "success");
 
         // Refresh activities list to show updated participants
         fetchActivities();
       } else {
-        messageDiv.textContent = result.detail || "An error occurred";
-        messageDiv.className = "error";
+        showMessage(result.detail || "An error occurred", "error");
       }
 
-      messageDiv.classList.remove("hidden");
-
-      // Hide message after 5 seconds
-      setTimeout(() => {
-        messageDiv.classList.add("hidden");
-      }, 5000);
     } catch (error) {
-      messageDiv.textContent = "Failed to unregister. Please try again.";
-      messageDiv.className = "error";
-      messageDiv.classList.remove("hidden");
+      showMessage("Failed to unregister. Please try again.", "error");
       console.error("Error unregistering:", error);
     }
   }
@@ -124,37 +135,67 @@ document.addEventListener("DOMContentLoaded", () => {
         )}/signup?email=${encodeURIComponent(email)}`,
         {
           method: "POST",
+          headers: { Authorization: `Bearer ${teacherToken}` },
         }
       );
 
       const result = await response.json();
 
       if (response.ok) {
-        messageDiv.textContent = result.message;
-        messageDiv.className = "success";
+        showMessage(result.message, "success");
         signupForm.reset();
 
         // Refresh activities list to show updated participants
         fetchActivities();
       } else {
-        messageDiv.textContent = result.detail || "An error occurred";
-        messageDiv.className = "error";
+        showMessage(result.detail || "An error occurred", "error");
       }
 
-      messageDiv.classList.remove("hidden");
-
-      // Hide message after 5 seconds
-      setTimeout(() => {
-        messageDiv.classList.add("hidden");
-      }, 5000);
     } catch (error) {
-      messageDiv.textContent = "Failed to sign up. Please try again.";
-      messageDiv.className = "error";
-      messageDiv.classList.remove("hidden");
+      showMessage("Failed to sign up. Please try again.", "error");
       console.error("Error signing up:", error);
     }
   });
 
+  loginToggle.addEventListener("click", async () => {
+    if (teacherToken) {
+      await fetch("/teacher/logout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${teacherToken}` },
+      });
+      teacherToken = null;
+      sessionStorage.removeItem("teacher_token");
+      updateTeacherControls();
+      showMessage("Logged out", "success");
+      fetchActivities();
+      return;
+    }
+    loginPanel.classList.toggle("hidden");
+  });
+
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const username = document.getElementById("teacher-username").value;
+    const password = document.getElementById("teacher-password").value;
+    const response = await fetch("/teacher/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      showMessage(result.detail || "Login failed", "error");
+      return;
+    }
+    teacherToken = result.token;
+    sessionStorage.setItem("teacher_token", teacherToken);
+    loginForm.reset();
+    updateTeacherControls();
+    showMessage("Logged in as teacher", "success");
+    fetchActivities();
+  });
+
   // Initialize app
+  updateTeacherControls();
   fetchActivities();
 });
